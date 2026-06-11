@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IPTV Test</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.4.12/hls.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, sans-serif;
+    background: #0f0f0f;
+    color: #e0e0e0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 24px;
+    padding: 24px;
+  }
+  h1 { font-size: 1.1rem; font-weight: 500; color: #999; letter-spacing: 0.05em; }
+  .card {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    padding: 24px;
+    width: 100%;
+    max-width: 560px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  label { font-size: 0.78rem; color: #888; text-transform: uppercase; letter-spacing: 0.06em; }
+  input {
+    background: #111;
+    border: 1px solid #333;
+    border-radius: 6px;
+    color: #e0e0e0;
+    padding: 10px 12px;
+    font-size: 0.92rem;
+    width: 100%;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  input:focus { border-color: #555; }
+  .row { display: flex; gap: 12px; }
+  .row > div { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  button {
+    background: #e8e0d0;
+    color: #111;
+    border: none;
+    border-radius: 6px;
+    padding: 11px;
+    font-size: 0.92rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+    width: 100%;
+  }
+  button:hover { background: #fff; }
+  #status {
+    font-size: 0.82rem;
+    color: #666;
+    text-align: center;
+    min-height: 18px;
+  }
+  #status.ok { color: #6dbf7e; }
+  #status.err { color: #e07070; }
+  video {
+    width: 100%;
+    max-width: 560px;
+    border-radius: 8px;
+    background: #000;
+    display: none;
+    aspect-ratio: 16/9;
+  }
+  .channels {
+    width: 100%;
+    max-width: 560px;
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .channels h2 { font-size: 0.85rem; color: #666; font-weight: 400; }
+  .ch-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  .ch-item {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 6px;
+    padding: 10px 14px;
+    font-size: 0.88rem;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .ch-item:hover { background: #252525; }
+  .ch-item.active { border-color: #555; color: #fff; }
+</style>
+</head>
+<body>
+
+<h1>IPTV · Test rapide</h1>
+
+<div class="card">
+  <div style="display:flex;flex-direction:column;gap:6px">
+    <label>URL serveur</label>
+    <input id="url" type="text" placeholder="http://monserveur.com:8080" />
+  </div>
+  <div class="row">
+    <div>
+      <label>Identifiant</label>
+      <input id="user" type="text" placeholder="username" />
+    </div>
+    <div>
+      <label>Mot de passe</label>
+      <input id="pass" type="password" placeholder="password" />
+    </div>
+  </div>
+  <button onclick="loadChannels()">Charger les chaînes</button>
+  <div id="status">—</div>
+</div>
+
+<video id="player" controls></video>
+
+<div class="channels" id="channels-wrap">
+  <h2 id="ch-count"></h2>
+  <div class="ch-list" id="ch-list"></div>
+</div>
+
+<script>
+let allChannels = [];
+
+function setStatus(msg, type = '') {
+  const s = document.getElementById('status');
+  s.textContent = msg;
+  s.className = type;
+}
+
+async function loadChannels() {
+  const url = document.getElementById('url').value.trim().replace(/\/$/, '');
+  const user = document.getElementById('user').value.trim();
+  const pass = document.getElementById('pass').value.trim();
+
+  if (!url || !user || !pass) {
+    setStatus('Remplis les trois champs.', 'err');
+    return;
+  }
+
+  setStatus('Connexion en cours…');
+
+  const apiUrl = `https://curly-breeze-df0a.titouan-44b.workers.dev/?url=${encodeURIComponent(`${url}/player_api.php?username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}&action=get_live_streams`)}`;
+
+  try {
+    const res = await fetch(apiUrl);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    if (!Array.isArray(data) || data.length === 0) {
+      setStatus('Aucune chaîne trouvée ou accès refusé.', 'err');
+      return;
+    }
+
+    allChannels = data;
+    setStatus(`✓ ${data.length} chaînes chargées`, 'ok');
+    renderChannels(url, user, pass, data);
+  } catch (e) {
+    if (e.message.includes('Failed to fetch') || e.name === 'TypeError') {
+      setStatus('Bloqué par CORS ou serveur inaccessible.', 'err');
+    } else {
+      setStatus(`Erreur : ${e.message}`, 'err');
+    }
+  }
+}
+
+function renderChannels(url, user, pass, channels) {
+  const wrap = document.getElementById('channels-wrap');
+  const list = document.getElementById('ch-list');
+  const count = document.getElementById('ch-count');
+
+  count.textContent = `${channels.length} chaînes disponibles`;
+  list.innerHTML = '';
+
+  channels.slice(0, 200).forEach(ch => {
+    const div = document.createElement('div');
+    div.className = 'ch-item';
+    div.textContent = ch.name;
+    div.onclick = () => playChannel(url, user, pass, ch, div);
+    list.appendChild(div);
+  });
+
+  wrap.style.display = 'flex';
+}
+
+const PROXY = 'https://curly-breeze-df0a.titouan-44b.workers.dev/';
+
+function playChannel(url, user, pass, ch, el) {
+  document.querySelectorAll('.ch-item').forEach(i => i.classList.remove('active'));
+  el.classList.add('active');
+
+  const baseStream = `${url}/live/${encodeURIComponent(user)}/${encodeURIComponent(pass)}/${ch.stream_id}`;
+  const video = document.getElementById('player');
+  video.style.display = 'block';
+
+  // On essaie d'abord HLS via proxy, puis fallback .ts direct
+  tryHLS(baseStream + '.m3u8', video, () => {
+    setStatus('HLS échoué, tentative flux direct (.ts)…');
+    video.src = baseStream + '.ts';
+    video.play().catch(() => setStatus('Échec lecture. Ce navigateur ne supporte pas ce flux.', 'err'));
+  });
+}
+
+function tryHLS(m3u8Url, video, onFail) {
+  const proxied = PROXY + '?url=' + encodeURIComponent(m3u8Url);
+
+  if (Hls.isSupported()) {
+    const hls = new Hls({
+      xhrSetup: (xhr, url) => {
+        // Si l'URL est un segment relatif ou absolu, on le proxifie aussi
+        if (!url.startsWith(PROXY)) {
+          const proxiedUrl = PROXY + '?url=' + encodeURIComponent(url);
+          xhr.open('GET', proxiedUrl, true);
+        }
+      }
+    });
+    hls.loadSource(proxied);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      setStatus('Lecture en cours…', 'ok');
+      video.play();
+    });
+    hls.on(Hls.Events.ERROR, (_, d) => {
+      console.error("HLS error", d.type, d.details, "fatal:", d.fatal);
+      setStatus(`HLS: ${d.details} (fatal: ${d.fatal})`, d.fatal ? "err" : "");
+      if (d.fatal) onFail();
+    });
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = proxied;
+    video.play();
+  } else {
+    onFail();
+  }
+}
+</script>
+</body>
+</html>
